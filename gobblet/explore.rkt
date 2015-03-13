@@ -1,4 +1,5 @@
-#lang racket
+#lang typed/racket
+(require typed/racket/unit)
 ;; This is the main search engine for auto-play.
 ;; See `make-search' for the main entry point.
 
@@ -19,10 +20,13 @@
     [(_ n i arg ...)
      #'(void)]))
 
+;; Lifted structs
+(define-struct config ([max-depth : Any] [memory : Any] [canonicalize : (-> Board Any Any)] [rate-board : Any] [canned-moves : Any]))
+(define-type Config config)
 (define-unit explore-unit@
     (import config^ model^)
     (export explore^)
-    (define-struct config (max-depth memory canonicalize rate-board canned-moves))
+    ;(define-struct config (max-depth memory canonicalize rate-board canned-moves))
     
     ;; make-search : (canonicalize-proc -> (board sym num num -> num))
     ;;               (canonicalize-proc hash-table -> (board sym compact xform -> plan)) 
@@ -36,8 +40,10 @@
     ;;  num for a plan is a rating for how good the plan is; +inf.0 means
     ;;  forced win, and -inf.0 means forced loss. A plan is created
     ;;  with `make-plan', described below.
+  (: make-search (-> (-> Any Any) (-> Any Any Any) Any))
     (define (make-search make-rate-board make-canned-moves)
       ;; Long-term memory (i.e., spans searches)
+      (: init-memory (HashTable Any Any))
       (define init-memory (make-hash))
       (define canonicalize (make-canonicalize))
       (define rate-board (make-rate-board canonicalize))
@@ -50,13 +56,13 @@
       ;;  including the current one, used to avoid cycles in the game).
       ;; The result is a play, which can be applied to a board with
       ;;  `apply-play'.
-      (lambda (timeout max-steps one-step-depth
-                       me board history)
+      (lambda ([timeout : Real] [max-steps : Real] [one-step-depth : Integer]
+                       [me : Any] [board : Board] [history : Any])
         (let* ([result #f]
                [once-sema (make-semaphore)]
                [result-sema (make-semaphore)]
                ;; Short-term memory (i.e., discarded after this search)
-               [memory (make-hash)])
+               [memory : (HashTable Any Any) (make-hash)])
           ;; Record game-history boards as loop ties
           (let loop ([history history][me (other me)])
             (unless (null? history)
@@ -70,12 +76,12 @@
                     (lambda ()
                       ;; Try just one chunk of lookaheads, then loop
                       ;; for more ambitious searches (if there's time)
-                      (let loop ([steps (if (= timeout +inf.0)
-                                            max-steps
-                                            1)]
-                                 [max-depth (if (= timeout +inf.0)
-                                                one-step-depth
-                                                2)])
+                      (let loop ([steps : Real (if (= timeout +inf.0)
+                                                   max-steps
+                                                   1)]
+                                 [max-depth : Real (if (= timeout +inf.0)
+                                                       one-step-depth
+                                                       2)])
                         (set! result
                               ;; ======== Here's where we get a move ============
                               (let ([v (multi-step-minmax
@@ -116,21 +122,24 @@
     ;;  the board), the destination position, a xform inidcating how to
     ;;  transform the positions into canonical positions, and a number
     ;;  that estimates how many more steps until the end of game.
-    (define-struct plan (size from-i from-j to-i to-j xform turns) #:mutable)
+    ;(define-struct plan (size from-i from-j to-i to-j xform turns) #:mutable)
     
     ;; apply-play : board play -> board
     ;; A play is (list piece from-i from-j to-i to-j turns)
     ;;  where turns is an estimate of how many moves remain in
     ;;  the game; the turns part is not used here (it can be left
     ;;  out), but it is returned by a search-proc.
+  (define-type Turns Any) ;; Don't know what this should be yet
+  (define-type Play (Pairof Piece (Listof (Option Integer))))
+  (: apply-play (-> Board Play Board))
     (define (apply-play board m)
-      (move board 
-            (list-ref m 0)
-            (list-ref m 1)
-            (list-ref m 2)
-            (list-ref m 3)
-            (list-ref m 4)
-            (lambda (new-board)
+      ((inst move Board) board 
+            (car m) ;(list-ref m 0)
+            (list-ref (cdr m) 0) ;(list-ref m 1)
+            (list-ref (cdr m) 1) ;(list-ref m 2)
+            (assert (list-ref (cdr m) 2)) ;(list-ref m 3)
+            (assert (list-ref (cdr m) 3)) ;(list-ref m 4)
+            (lambda ([new-board : Board])
               new-board)
             (lambda ()
               (error 'apply-play "bad move: ~a" m))))
@@ -144,12 +153,13 @@
     (define LOOP-TIE `((-1000.0 loop!)))
     
     ;; Translates a plan into the given coordinate xform
+  (: xlate (-> Plan XForm Plan))
     (define (xlate m xform)
       (let-values ([(from-i from-j)
                     (if (plan-from-i m)
                         (unapply-xform xform (apply-xform (plan-xform m)
-                                                          (plan-from-i m)
-                                                          (plan-from-j m)))
+                                                          (assert (plan-from-i m)) ; this could be lifted to a let to avoid the assert
+                                                          (assert (plan-from-j m))))
                         (values #f #f))]
                    [(to-i to-j)
                     (unapply-xform xform (apply-xform (plan-xform m)
@@ -177,6 +187,7 @@
     ;;  The two lists are sorted, and the result should keep them sorted.
     ;;  For -inf.0 ratings, prefer the move farthest from the end of the
     ;;  game, otherwise prefer the move closest.
+  (: best (-> Integer (Listof Any) (Listof Any) (Listof Any)))
     (define (best span a b)
       (cond
         ;; First, cases where span, a, or b goes to zero/null: 
@@ -242,6 +253,7 @@
     ;; ...state and search params... -> (values (listof (cons num plan)) xform)
     ;; Minimax search up to the given max-depth, returning up to span
     ;; choices of move.
+  (: minmax (-> Any Any Config Any Board (Option Integer) (Option Integer) (Values (Listof (Pairof Any Any)) XForm)))
     (define (minmax depth span config me board last-to-i last-to-j)
       (set! hit-count (add1 hit-count))
       (let* ([board-key+xform ((config-canonicalize config) board me)]
@@ -310,6 +322,7 @@
     
     ;; try-all-enters : ... -> (listof (cons num plan))
     ;; Try moving each available off-board piece onto each board position
+  (: try-all-enters (-> Any Any Any Any Any Any Any Any))
     (define (try-all-enters choices depth span config me board xform)
       (let loop ([enters (pick-enters board me)]
                  [choices choices])
@@ -329,11 +342,12 @@
     
     ;; try-all-moves : ... -> (listof (cons num plan))
     ;; Try moving each on-board piece onto each other board position
+  (: try-all-moves (-> Any Integer Any Config Any Board XForm Any))
     (define (try-all-moves choices depth span config me board xform)
       ;; From each source...
       (fold-board/choices
        span choices
-       (lambda (from-i from-j)
+       (lambda ([from-i : Integer] [from-j : Integer])
          ;; ... if it has my piece...
          (let ([l (board-ref board from-i from-j)])
            (if (and (pair? l)
@@ -341,7 +355,7 @@
                ;; ... try every target position:
                (fold-board/choices
                 span choices
-                (lambda (to-i to-j)
+                (lambda ([to-i : Integer] [to-j : Integer])
                   (try-move depth config 
                             board me 
                             (car l) from-i from-j to-i to-j xform)))
@@ -350,11 +364,12 @@
     
     ;; Try the move, and if it's ok, call `minmax' with the other
     ;; player and invert the result
+  (: try-move (-> Integer Config Board Any Piece (Option Integer) (Option Integer) Integer Integer XForm Any))
     (define (try-move depth config 
                       board me
                       p from-i from-j to-i to-j xform)
       (move board p from-i from-j to-i to-j
-            (lambda (new-board)
+            (lambda ([new-board : Board])
               ;; Move is ok; rate it
               (set! move-count (add1 move-count))
               ;; Min-max recur for other player:
@@ -377,8 +392,8 @@
     
     ;; pick-enters: board -> (listof num)
     (define (pick-enters board me)
-      (let loop ([avail-pieces (available-off-board board me)]
-                 [played-sizes null])
+      (let loop : (Listof Integer) ([avail-pieces : (Listof Piece) (available-off-board board me)]
+                                    [played-sizes : (Listof Integer) null])
         (cond
           [(null? avail-pieces) null]
           [(memq (caar avail-pieces) played-sizes)
@@ -394,9 +409,10 @@
     
     ;; Like `fold-board', but auto combines choices and
     ;;  handles shortcut for known immediate wins
+  (: fold-board/choices (All (a) (-> Integer (Listof a) (-> Integer Integer a) a)))
     (define (fold-board/choices span choices f)
       (fold-board
-       (lambda (i j choices)
+       (lambda ([i : Integer] [j : Integer] choices)
          (if (and (found-win? choices)
                   (immediate? choices))
              choices
@@ -458,9 +474,10 @@
     ;; Apply minmax, and if steps > 1, rate resulting moves by applying
     ;; minmax to them. Meanwhile, in learning mode, record any resulting
     ;; move that is known to lead to winning or losing.
+  (: multi-step-minmax (-> Integer Any Config Integer Any Any Board (Pairof Real Any)))
     (define (multi-step-minmax steps span config indent init-memory me board)
       (define first-move? 
-        ((fold-board (lambda (i j v) (+ v (length (board-ref board i j)))) 0) . < . 2))
+        ((fold-board (lambda ([i : Integer] [j : Integer] [v : Integer]) (+ v (length (board-ref board i j)))) 0) . < . 2))
       (define now (current-inexact-milliseconds))
       (set! hit-count 0)
       (set! depth-count 0)
@@ -480,11 +497,11 @@
                     (make-string indent #\space) 
                     hit-count depth-count explore-count enter-count move-count
                     (float->string (/ (- (current-inexact-milliseconds) now) 1000)))
-        (let ([plays
-               (map (lambda (v)
+        (let ([plays : (Listof (Listof Real))
+               (map (lambda ([v : (Pairof Any Plan)])
                       ;; Transform each result, and turn it into a list
                       (cons (car v) 
-                            (let ([m (xlate (cdr v) xform)])
+                            (let ([m : Plan (xlate (cdr v) xform)])
                               (list (list-ref (if (eq? me 'red)
                                                   red-pieces
                                                   yellow-pieces)
@@ -494,7 +511,7 @@
                                     (plan-to-i m)
                                     (plan-to-j m)
                                     (get-depth v)))))
-                    (filter (lambda (v) (plan? (cdr v))) vs))])
+                    ((inst filter (Pairof Any Any) (Pairof Any Plan)) (lambda ([v : (Pairof Any Any)]) (plan? (cdr v))) vs))])
           (log-printf 3 indent "~a>> Best Plays: ~a\n" 
                       (make-string indent #\space) (plays->string 
                                                     (make-string (+ 15 indent) #\space)
@@ -518,7 +535,7 @@
                    (if ((caar plays) . < . +inf.0)
                        (sort
                         (map
-                         (lambda (play)
+                         (lambda ([play : (Pairof Real Play)])
                            (log-printf 4 indent " ~a>>> Checking: ~a\n" 
                                        (make-string indent #\space) (play->string play))
                            (cond
@@ -542,13 +559,13 @@
                                            (float->string (car r)))
                                r)]))
                          plays)
-                        (lambda (a b) (> (car a) (car b))))
+                        (lambda ([a : (Pairof Integer Any)] [b : (Pairof Integer Any)]) (> (car a) (car b))))
                        (list (car plays)))])
               (first nexts))]))))
     
     ;; ------------------------------------------------------------
     ;;  Multi-run memory:
-    
+    (: learn? Boolean)
     (define learn? #f)
     (define MEMORY-FILE
       (and learn?
@@ -563,7 +580,7 @@
                     (car board-key+xform)
                     (lambda ()
                       ;; This is new...
-                      (with-output-to-file MEMORY-FILE
+                      (with-output-to-file (assert MEMORY-FILE)
                         (lambda ()
                           (let ([m (cdar plays)])
                             (printf "(~a ~a ~a)\n#|\n~a|#\n" 
@@ -576,14 +593,15 @@
                                      (list-ref m 3) (list-ref m 4)
                                      (list-ref m 5))
                                     (board->string 0 board))))
-                        'append))))))
+                        ;; previously missing keyword argument here
+                        #:exists 'append))))))
     
     ;; to load what we've learned from previous runs
     (define (load-memory init-memory canonicalize)
       (with-handlers ([exn:fail:filesystem? void])
         (with-input-from-file MEMORY-FILE
           (lambda ()
-            (let loop ()
+            (let loop : Any ()
               (let ([v (read)])
                 (unless (eof-object? v)
                   (let ([board-key+xform (canonicalize (cadr v) #f)])
@@ -602,18 +620,19 @@
     
     ;; ------------------------------------------------------------
     ;;  Debugging helpers
-    
+    (: float->string (-> Real String))
     (define (float->string v)
       (let ([s (string-append (number->string v) "000000")])
         (substring s 0 (min 6 (string-length s)))))
     
+
     (define (play->string p)
       (format "~a (~a,~a)->(~a,~a) [~a/~a]"
               (piece-size (list-ref p 1))
               (list-ref p 2) (list-ref p 3)  (list-ref p 4) (list-ref p 5)
               (float->string (car p))
               (list-ref p 6)))
-    
+    (: plays->string (-> String (Listof Any) String))
     (define (plays->string is p)
       (if (null? p)
           "()"
