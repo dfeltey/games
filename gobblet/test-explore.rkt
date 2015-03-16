@@ -1,5 +1,5 @@
-#lang racket
-(require racket/unit
+#lang typed/racket
+(require typed/racket/unit
          "sig.rkt"
          (only-in "model.rkt" model-unit@)
          (only-in "explore.rkt" explore-unit@)
@@ -15,33 +15,42 @@
 (define-unit robot-unit@ 
   (import config^ explore^ model^ heuristics^)
   (export)
+  
+  ;; This function forces the return of mv to be a board, or errors
+  ;; this is to make the types work out, since this mv breaks
+  ;; the invariant specified in the model unit's definition of move
+  (: mv-board (-> (U Board Void) Board))
+  (define (mv-board b/v) (assert b/v (lambda ([b/v : (U Board Void)]) (not (void? b/v)))))
+  
+  (: mv (-> Board Piece (Option Integer) (Option Integer) Integer Integer (-> Board Board) Board))
   (define (mv b p fi fj ti tj k)
-    (move b p fi fj ti tj k void))
+    (mv-board (move b p fi fj ti tj k void)))
   
   (define big (sub1 BOARD-SIZE))
   (define med (- BOARD-SIZE 2))
   
   (define 3x3-one-step-win
     ;; One-step win
-    (mv empty-board (list-ref red-pieces big) #f #f 0 0
-        (lambda (board)
-          (mv board (list-ref red-pieces big) #f #f 1 1
-              values))))
+     (mv empty-board (list-ref red-pieces big) #f #f 0 0
+         (lambda (board)
+            (mv board (list-ref red-pieces big) #f #f 1 1
+                values))))
   
   (define 3x3-two-step-win
-    (mv empty-board (list-ref red-pieces big) #f #f 0 0
+     (mv empty-board (list-ref red-pieces big) #f #f 0 0
         (lambda (board)
-          (mv board (list-ref yellow-pieces big) #f #f 1 0
-              (lambda (board)
-                (mv board (list-ref red-pieces big) #f #f 1 1
-                    (lambda (board)
-                      (mv board (list-ref yellow-pieces big) 1 0 2 2
-                          (lambda (board)
-                            (mv board (list-ref red-pieces med) #f #f 1 0
-                                (lambda (board)
-                                  (mv board (list-ref yellow-pieces big) #f #f 1 0
-                                      values))))))))))))
+           (mv board (list-ref yellow-pieces big) #f #f 1 0
+               (lambda (board)
+                  (mv board (list-ref red-pieces big) #f #f 1 1
+                      (lambda (board)
+                         (mv board (list-ref yellow-pieces big) 1 0 2 2
+                             (lambda (board)
+                                (mv board (list-ref red-pieces med) #f #f 1 0
+                                    (lambda (board)
+                                       (mv board (list-ref yellow-pieces big) #f #f 1 0
+                                           values))))))))))))
   
+  (: test-search (-> Integer Board Color (Listof Board) Any))
   (define (test-search depth board who history)
     ((make-search (if (= BOARD-SIZE 3)
                       make-3x3-rate-board

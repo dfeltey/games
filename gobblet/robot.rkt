@@ -1,4 +1,5 @@
-#lang racket
+#lang typed/racket
+(require typed/racket/unit)
 ;; Plays automatic games, often useful when learning is enabled in "explore.rkt"
 
 (require "sig.rkt"
@@ -37,18 +38,19 @@
   (define how-many 50)
   
   ;; Play-a-game test
-  (let go ()
+  (let go : Void ()
     (unless (zero? how-many)
       (set! how-many (sub1 how-many))
       ;(sleep 1)
-      (define s (bitwise-and (+ (current-milliseconds) (random 100))
-                             (sub1 (expt 2 31))))
+      (: s Positive-Integer)
+      (define s (assert (bitwise-and (+ (current-milliseconds) (random 100))
+                             (sub1 (expt 2 31))) positive?))
       (printf "Random seed: ~s\n" s)
       (random-seed s)
-      (let loop ([board init-board]
-                 [who init-who]
-                 [who-moved "no one"]
-                 [history null])
+      (let loop : Void ([board init-board]
+                        [who : Color init-who]
+                        [who-moved : (U Symbol String) "no one"]
+                        [history : (Listof Board) null])
         (cond
           [(winner? board who)
            (printf "----------- ~a wins!-------------\n~a\n" who (board->string 1 board))

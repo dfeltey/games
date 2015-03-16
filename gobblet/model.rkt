@@ -122,10 +122,10 @@
   ;; allows the move and calls the continuation k with the new
   ;; board, or disallows and calls the failure continuation.
   ;; The given piece and its source must be correct and ok to move.
-  (: move (All (a) (-> Board Piece (Option Integer) (Option Integer) Integer Integer
+  (: move (All (a b) (-> Board Piece (Option Integer) (Option Integer) Integer Integer
               (-> Board a)
-              (-> a)
-              a)))
+              (-> b)
+              (U a b))))
   (define (move board p from-i from-j to-i to-j k fail-k)
     (let ([pl (board-ref board to-i to-j)])
       ;; The move is allowed if the target space is empty or the

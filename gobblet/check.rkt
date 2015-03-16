@@ -1,10 +1,10 @@
-#lang racket
+#lang typed/racket
 ;; Checks that all paths in a tree of games leads to the expected
 ;; winner. It also generates information for known plays to be used to
 ;; speed up future games (i.e., converts learned strategy to a compact
 ;; form).
 
-(require racket/unit
+(require typed/racket/unit
          "sig.rkt"
          (only-in "model.rkt" model-unit@)
          (only-in "explore.rkt" explore-unit@)
@@ -21,8 +21,16 @@
 (define-unit robot-unit@ 
   (import config^ explore^ model^ heuristics^)
   (export)
+  
+  ;; This function forces the return of mv to be a board, or errors
+  ;; this is to make the types work out, since this mv breaks
+  ;; the invariant specified in the model unit's definition of move
+  (: mv-board (-> (U Board Void) Board))
+  (define (mv-board b/v) (assert b/v (lambda ([b/v : (U Board Void)]) (not (void? b/v)))))
+  
+  (: mv (-> Board Piece (Option Integer) (Option Integer) Integer Integer (-> Board Board) Board))
   (define (mv b p fi fj ti tj k)
-    (move b p fi fj ti tj k void))
+    (mv-board (move b p fi fj ti tj k void)))
   
   (define big (sub1 BOARD-SIZE))
   (define med (- BOARD-SIZE 2))
@@ -48,6 +56,7 @@
                                   (mv board (list-ref yellow-pieces big) #f #f 1 0
                                       values))))))))))))
   
+  (: test-search (-> Integer Board Color (Listof Board) Any))
   (define (test-search depth board who history)
     ((make-search (if (= BOARD-SIZE 3)
                       make-3x3-rate-board
